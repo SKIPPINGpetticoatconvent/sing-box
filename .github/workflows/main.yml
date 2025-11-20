@@ -1,0 +1,61 @@
+name: Daily Force Sync Fork Excluding Workflow
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  force_sync_from_upstream:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. 检出仓库
+      - name: Checkout target repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0 
+          ref: main 
+          
+      # 2. 存储当前工作流文件，以便稍后恢复
+      - name: Cache the current Workflow File
+        # ⚠️ 必须根据您的实际文件名和路径进行修改！
+        run: cp .github/workflows/main.yml /tmp/sync-force.yml
+        
+      # 3. 配置 Git
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+      # 4. 设置上游远程
+      - name: Set upstream remote
+        # ⚠️ 必须修改的地方：上游仓库 URL
+        run: git remote add upstream https://github.com/233boy/sing-box.git
+        
+      # 5. 拉取上游更改并硬重置
+      - name: Fetch and Hard Reset
+        run: |
+          git fetch upstream
+          # 将本地分支硬重置到上游状态 (覆盖所有文件)
+          git reset --hard upstream/main
+        
+      # 6. 恢复工作流文件
+      - name: Restore the Workflow File
+        # 将缓存的工作流文件恢复到正确的位置，覆盖了上游版本
+        run: cp /tmp/sync-force.yml .github/workflows/sync-force.yml
+        
+      # 7. 暂存和提交恢复的文件
+      - name: Stage and Commit Workflow File
+        run: |
+          git add .github/workflows/sync-force.yml
+          # 如果文件有变化，创建一个新的提交
+          git commit -m "Revert local sync workflow configuration after force sync" || echo "No changes to commit in workflow file."
+
+      # 8. 强制推送
+      - name: Push changes to your fork
+        # 使用 --force 推送，因为重置已经发生
+        run: git push --force origin main
+        
+      - name: Synchronization Complete
+        run: echo "Fork synchronized. Workflow file restored to local version."
