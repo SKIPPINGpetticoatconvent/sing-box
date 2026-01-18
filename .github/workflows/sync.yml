@@ -1,0 +1,98 @@
+name: Sync with Upstream
+
+on:
+  # 每天北京时间下午4点（UTC 8点）自动运行一次
+  schedule:
+    - cron: "0 8 * * *"
+  # 允许手动触发
+  workflow_dispatch:
+
+# 添加必要的权限
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+      - name: Sync with upstream
+        run: |
+          set -e
+
+          # ⚠️ 这是您新模板中的上游仓库。如果需要，请修改此行。
+          UPSTREAM_REPO="https://github.com/233boy/sing-box.git"
+          TMP_DIR=""
+
+          # 清理函数：确保临时目录在脚本退出时被删除
+          cleanup() {
+            if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ]; then
+              rm -rf "$TMP_DIR"
+            fi
+          }
+          trap cleanup EXIT
+
+          echo "🔄 Starting sync process..."
+
+          # 添加上游仓库
+          if ! git remote get-url upstream >/dev/null 2>&1; then
+            git remote add upstream $UPSTREAM_REPO
+          fi
+
+          # 获取上游更新
+          git fetch upstream
+
+          # 检查是否有新提交（比较本地 HEAD 和上游的 main 分支）
+          if [ $(git rev-list HEAD...upstream/main --count) -eq 0 ]; then
+            echo "✅ Already up-to-date"
+            exit 0
+          fi
+
+          echo "🔄 New changes detected, syncing..."
+
+          # 备份 .github 目录（保留本地 Actions 配置）
+          if [ -d ".github" ]; then
+            TMP_DIR=$(mktemp -d)
+            cp -r .github "$TMP_DIR/"
+            echo "✅ Backed up .github directory"
+          fi
+
+          # 重置到上游状态（覆盖除 .github 外的所有文件）
+          git reset --hard upstream/main
+
+          # 恢复 .github 目录
+          if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR/.github" ]; then
+            rm -rf .github
+            mv "$TMP_DIR/.github" .github
+            echo "✅ Restored .github directory"
+          fi
+
+          # 提交 .github 变化（如果有）
+          git add .github
+          if ! git diff --cached --quiet; then
+            git commit -m "CI: Sync with upstream and preserve workflows"
+          fi
+
+          # 推送到远程（使用 --force-with-lease 避免覆盖其他人的并行推送）
+          git push origin main --force-with-lease
+
+          echo "🎉 Sync complete!"
+
+      - name: Create summary
+        if: success()
+        run: |
+          echo "## ✅ Sync Successful" >> $GITHUB_STEP_SUMMARY
+          echo "Synced with upstream at $(date -u)" >> $GITHUB_STEP_SUMMARY
